@@ -17,9 +17,11 @@ const renderer = new marked.Renderer();
 
 // 重写代码块渲染，识别 mermaid 语言
 renderer.code = function(code, language) {
-  // 处理 mermaid 图表
+  // 处理 mermaid 图表 - 支持各种图表类型
   if (language === 'mermaid') {
-    return `<div class="mermaid">${code}</div>`;
+    // 清理代码，确保正确的格式
+    const cleanCode = code.trim();
+    return `<div class="mermaid">${cleanCode}</div>`;
   }
   
   // 处理其他代码块，添加语法高亮
@@ -326,73 +328,144 @@ function generateHtmlTemplate(title, content) {
   <div id="content">${htmlContent}</div>
   
   <!-- 使用 CDN 加载 Mermaid -->
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <script>
-    // 初始化 Mermaid
+    // Mermaid 初始化配置 - 支持所有图表类型
     mermaid.initialize({
       startOnLoad: true,
       theme: 'default',
       securityLevel: 'loose',
+      fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
+      // 流程图配置
       flowchart: {
         useMaxWidth: true,
         htmlLabels: true,
-        curve: 'basis'
+        curve: 'basis',
+        padding: 15,
+        nodeSpacing: 50,
+        rankSpacing: 50,
+        diagramPadding: 8
       },
+      // 时序图配置
       sequence: {
         useMaxWidth: true,
         diagramMarginX: 50,
         diagramMarginY: 10,
         actorMargin: 50,
         width: 150,
-        height: 65
+        height: 65,
+        boxMargin: 10,
+        boxTextMargin: 5,
+        noteMargin: 10,
+        messageMargin: 35,
+        mirrorActors: true
       },
+      // ER图配置
       er: {
-        useMaxWidth: true
+        useMaxWidth: true,
+        diagramPadding: 20,
+        layoutDirection: 'TB'
       },
+      // 甘特图配置
       gantt: {
+        useMaxWidth: true,
+        leftPadding: 75,
+        gridLineStartPadding: 35,
+        barHeight: 20,
+        barGap: 4,
+        topPadding: 50
+      },
+      // 饼图配置
+      pie: {
         useMaxWidth: true
       },
+      // 类图配置
+      class: {
+        useMaxWidth: true
+      },
+      // 状态图配置
+      state: {
+        useMaxWidth: true
+      },
+      // 用户旅程图配置
       journey: {
-        useMaxWidth: true
+        useMaxWidth: true,
+        diagramMarginX: 50,
+        diagramMarginY: 10,
+        actorMargin: 50,
+        boxMargin: 10
       },
+      // Git图配置
       gitgraph: {
         useMaxWidth: true
+      },
+      // 思维导图配置
+      mindmap: {
+        useMaxWidth: true,
+        padding: 10
       }
     });
     
     // 等待所有 Mermaid 图表渲染完成
     function waitForMermaid() {
       return new Promise((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 300; // 最多尝试 300 次 (30秒)
+        
         const checkInterval = setInterval(() => {
+          attempts++;
           const mermaidDivs = document.querySelectorAll('.mermaid');
+          
+          if (mermaidDivs.length === 0) {
+            // 没有 mermaid 图表，直接完成
+            clearInterval(checkInterval);
+            resolve();
+            return;
+          }
+          
           let allRendered = true;
+          let renderedCount = 0;
           
           mermaidDivs.forEach(div => {
-            // 检查是否已渲染（包含 svg 元素）
-            if (!div.querySelector('svg')) {
+            // 检查是否已渲染（包含 svg 元素且不含错误信息）
+            const svg = div.querySelector('svg');
+            const hasError = div.textContent.includes('Syntax error') ||
+                            div.textContent.includes('Error');
+            
+            if (svg && !hasError) {
+              renderedCount++;
+              // 确保 SVG 有正确的尺寸
+              svg.style.maxWidth = '100%';
+              svg.style.height = 'auto';
+              svg.style.display = 'block';
+              svg.style.margin = '0 auto';
+            } else if (!hasError) {
               allRendered = false;
             }
           });
           
-          if (allRendered || mermaidDivs.length === 0) {
+          console.log('Mermaid 渲染进度: ' + renderedCount + '/' + mermaidDivs.length);
+          
+          if (allRendered || attempts >= maxAttempts) {
             clearInterval(checkInterval);
-            // 额外等待确保渲染完成
-            setTimeout(resolve, 500);
+            // 额外等待确保所有 SVG 完全渲染
+            setTimeout(resolve, 1000);
           }
         }, 100);
-        
-        // 最多等待 30 秒
-        setTimeout(() => {
-          clearInterval(checkInterval);
-          resolve();
-        }, 30000);
       });
     }
     
     // 页面加载完成后等待 Mermaid 渲染
     window.addEventListener('load', async function() {
-      await waitForMermaid();
-      window.mermaidReady = true;
+      try {
+        console.log('开始等待 Mermaid 渲染...');
+        await waitForMermaid();
+        console.log('Mermaid 渲染完成');
+        window.mermaidReady = true;
+      } catch (error) {
+        console.error('Mermaid 渲染错误:', error);
+        window.mermaidReady = true;
+      }
     });
   </script>
 </body>
@@ -410,8 +483,9 @@ export async function generatePdf(title, markdownContent) {
   
   try {
     console.log(`[PDF Service] 开始生成 PDF: ${title}`);
+    console.log(`[PDF Service] 文档内容长度: ${markdownContent.length} 字符`);
     
-    // 启动 Puppeteer 浏览器
+    // 启动 Puppeteer 浏览器 - 增加内存和超时配置
     browser = await puppeteer.launch({
       headless: 'new',
       args: [
@@ -420,49 +494,131 @@ export async function generatePdf(title, markdownContent) {
         '--disable-dev-shm-usage',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--no-first-run',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-breakpad',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-ipc-flooding-protection',
+        '--disable-hang-monitor',
+        '--disable-popup-blocking',
+        '--disable-prompt-on-repost',
+        '--disable-client-side-phishing-detection',
+        '--disable-sync',
+        '--metrics-recording-only',
+        '--disable-default-apps',
+        '--mute-audio',
+        '--hide-scrollbars',
+        '--autoplay-policy=user-gesture-required',
+        '--disable-notifications',
+        '--disable-offer-store-unmasked-wallet-cards',
+        '--disable-offer-upload-credit-cards',
+        '--disable-print-preview',
+        '--disable-setuid-sandbox',
+        '--disk-cache-size=0',
+        '--js-flags=--max-old-space-size=4096', // 增加 JS 堆内存
       ],
     });
     
     const page = await browser.newPage();
     
-    // 设置页面超时
-    page.setDefaultTimeout(60000);
+    // 设置页面超时 - 增加到 3 分钟
+    page.setDefaultTimeout(180000);
+    page.setDefaultNavigationTimeout(180000);
+    
+    // 监听页面错误
+    page.on('error', (err) => {
+      console.error('[PDF Service] 页面错误:', err);
+    });
+    
+    page.on('pageerror', (err) => {
+      console.error('[PDF Service] 页面脚本错误:', err);
+    });
     
     // 生成 HTML 内容
     const html = generateHtmlTemplate(title, markdownContent);
     
-    // 设置页面内容
+    // 设置页面内容 - 使用 networkidle2 更宽松的等待条件
     await page.setContent(html, {
-      waitUntil: 'networkidle0',
+      waitUntil: 'domcontentloaded',
       timeout: 60000,
     });
+    
+    // 等待 CDN 资源加载（mermaid 库）
+    console.log('[PDF Service] 等待页面资源加载...');
+    try {
+      await page.waitForFunction(
+        () => typeof window.mermaid !== 'undefined',
+        { timeout: 15000 }
+      );
+      console.log('[PDF Service] Mermaid 库加载完成');
+    } catch (e) {
+      console.log('[PDF Service] Mermaid 库加载超时，继续处理');
+    }
     
     // 等待 Mermaid 渲染完成
     console.log('[PDF Service] 等待 Mermaid 图表渲染...');
     await page.evaluate(async () => {
       // 等待 mermaidReady 标志
       await new Promise((resolve) => {
+        let checkCount = 0;
+        const maxChecks = 600; // 最多检查 600 次 (60秒)
+        
         const checkReady = setInterval(() => {
+          checkCount++;
+          
           if (window.mermaidReady) {
+            console.log('Mermaid 渲染标志已设置');
+            clearInterval(checkReady);
+            resolve();
+            return;
+          }
+          
+          // 检查是否所有 mermaid div 都已渲染
+          const mermaidDivs = document.querySelectorAll('.mermaid');
+          let allRendered = true;
+          
+          mermaidDivs.forEach(div => {
+            const svg = div.querySelector('svg');
+            if (!svg) {
+              allRendered = false;
+            }
+          });
+          
+          if (allRendered && mermaidDivs.length > 0) {
+            console.log('所有 Mermaid 图表已渲染');
+            clearInterval(checkReady);
+            resolve();
+            return;
+          }
+          
+          if (checkCount >= maxChecks) {
+            console.log('等待超时，继续生成 PDF');
             clearInterval(checkReady);
             resolve();
           }
         }, 100);
-        
-        // 最多等待 30 秒
-        setTimeout(() => {
-          clearInterval(checkReady);
-          resolve();
-        }, 30000);
       });
     });
     
-    // 额外等待确保所有图表渲染完成
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // 额外等待确保所有图表完全渲染和布局稳定
+    console.log('[PDF Service] 等待图表布局稳定...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // 获取渲染后的图表数量，用于日志
+    const chartCount = await page.evaluate(() => {
+      return document.querySelectorAll('.mermaid svg').length;
+    });
+    console.log(`[PDF Service] 成功渲染 ${chartCount} 个图表`);
     
     console.log('[PDF Service] 开始生成 PDF 文件...');
     
-    // 生成 PDF
+    // 生成 PDF - 增加超时和优化配置
     const pdfBuffer = await page.pdf({
       format: 'A4',
       margin: {
@@ -473,6 +629,7 @@ export async function generatePdf(title, markdownContent) {
       },
       printBackground: true,
       displayHeaderFooter: true,
+      preferCSSPageSize: false,
       headerTemplate: `
         <div style="font-size: 10px; text-align: center; width: 100%; color: #9ca3af; padding: 5px 0;">
           ${title} - DeepWiki Analyzer
@@ -483,6 +640,8 @@ export async function generatePdf(title, markdownContent) {
           第 <span class="pageNumber"></span> 页 / 共 <span class="totalPages"></span> 页
         </div>
       `,
+      // 增加超时时间，处理大文档
+      timeout: 120000, // 2 分钟超时
     });
     
     console.log(`[PDF Service] PDF 生成成功，大小: ${Math.round(pdfBuffer.length / 1024)}KB`);
@@ -490,11 +649,24 @@ export async function generatePdf(title, markdownContent) {
     return pdfBuffer;
   } catch (error) {
     console.error('[PDF Service] PDF 生成失败:', error);
-    throw new Error(`PDF 生成失败: ${error.message}`);
+    console.error('[PDF Service] 错误堆栈:', error.stack);
+    
+    // 提供更详细的错误信息
+    if (error.message.includes('timeout')) {
+      throw new Error('PDF 生成超时：文档内容过大或图表渲染耗时过长，请尝试减少文档内容或稍后重试');
+    } else if (error.message.includes('memory')) {
+      throw new Error('PDF 生成内存不足：文档内容过大，请尝试减少文档内容');
+    } else {
+      throw new Error(`PDF 生成失败: ${error.message}`);
+    }
   } finally {
     // 关闭浏览器
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+      } catch (e) {
+        console.error('[PDF Service] 关闭浏览器失败:', e);
+      }
     }
   }
 }

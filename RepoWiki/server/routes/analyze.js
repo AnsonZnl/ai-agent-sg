@@ -272,9 +272,14 @@ router.get('/pdf/:taskId', async (req, res) => {
       });
     }
 
+    // 设置响应超时 - 大文档需要更长时间
+    req.setTimeout(300000); // 5 分钟
+    res.setTimeout(300000); // 5 分钟
+
     // 生成 PDF
     const title = task.repoName || '代码分析文档';
     console.log(`[API] 开始生成 PDF: ${taskId}`);
+    console.log(`[API] 文档内容长度: ${task.result?.length || 0} 字符`);
     
     const pdfBuffer = await generatePdf(title, task.result);
     
@@ -283,12 +288,34 @@ router.get('/pdf/:taskId', async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
     res.setHeader('Content-Length', pdfBuffer.length);
+    // 禁用缓存，确保每次都重新生成
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     
     // 返回 PDF 文件
     res.send(pdfBuffer);
-    console.log(`[API] PDF 生成完成: ${filename}`);
+    console.log(`[API] PDF 生成完成: ${filename}, 大小: ${Math.round(pdfBuffer.length / 1024)}KB`);
   } catch (error) {
     console.error('[API] PDF 生成失败:', error);
+    console.error('[API] 错误堆栈:', error.stack);
+    
+    // 检查是否是超时错误
+    if (error.message.includes('timeout') || error.code === 'ETIMEDOUT') {
+      return res.status(504).json({
+        success: false,
+        error: 'PDF 生成超时：文档内容过大，请稍后重试或联系管理员',
+      });
+    }
+    
+    // 检查是否是内存错误
+    if (error.message.includes('memory') || error.code === 'ENOMEM') {
+      return res.status(507).json({
+        success: false,
+        error: 'PDF 生成内存不足：文档内容过大，请减少文档内容后重试',
+      });
+    }
+    
     res.status(500).json({
       success: false,
       error: `PDF 生成失败: ${error.message}`,

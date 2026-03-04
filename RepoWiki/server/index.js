@@ -83,7 +83,7 @@ app.use((err, req, res, next) => {
 
 // 启动服务器
 const PORT = config.server.port;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log('');
   console.log('╔════════════════════════════════════════╗');
   console.log('║      DeepWiki Analyzer 已启动          ║');
@@ -97,8 +97,14 @@ app.listen(PORT, () => {
   console.log(`  GET  http://localhost:${PORT}/api/status/:id - 查询任务状态`);
   console.log(`  GET  http://localhost:${PORT}/api/result/:id - 获取分析结果`);
   console.log(`  GET  http://localhost:${PORT}/api/download/:id - 下载文档`);
+  console.log(`  GET  http://localhost:${PORT}/api/pdf/:id    - 下载 PDF`);
   console.log('');
 });
+
+// 配置服务器超时 - 大文档生成需要更长时间
+server.timeout = 600000; // 10 分钟
+server.keepAliveTimeout = 650000; // 稍大于 timeout
+server.headersTimeout = 660000; // 稍大于 keepAliveTimeout
 
 // 优雅关闭
 process.on('SIGTERM', () => {
