@@ -2,7 +2,8 @@
  * 分析引擎核心服务
  * 作者: JoyCode
  * 创建日期: 2026-03-03
- * 描述: 编排各分析阶段的 Prompt 调用，生成最终文档
+ * 更新日期: 2026-03-04
+ * 描述: 编排各分析阶段的 Prompt 调用，生成毕业论文级别的技术文档
  */
 
 import fs from 'fs/promises';
@@ -11,12 +12,13 @@ import { chatWithSystem, withRetry } from '../utils/llm.js';
 import { collectFiles, readFileContent, cleanupDir, getRepoInfo } from './gitService.js';
 import { AnalysisStages } from './taskManager.js';
 import {
-  directoryAnalysisPrompt,
-  architectureAnalysisPrompt,
-  environmentAnalysisPrompt,
-  moduleAnalysisPrompt,
-  databaseAnalysisPrompt,
-  qaGenerationPrompt,
+  introductionPrompt,
+  requirementAnalysisPrompt,
+  systemDesignPrompt,
+  implementationPrompt,
+  testingPrompt,
+  summaryPrompt,
+  thesisQaPrompt,
   assemblePrompt,
 } from '../prompts/index.js';
 
@@ -166,7 +168,7 @@ async function extractKeyFiles(fileInfo, repoPath) {
       if (content) {
         result.dependencies.push({
           name: file.relativePath,
-          content: content.slice(0, 5000), // 限制长度
+          content: content.slice(0, 8000),
         });
       }
     }
@@ -177,7 +179,7 @@ async function extractKeyFiles(fileInfo, repoPath) {
       if (content) {
         result.config.push({
           name: file.relativePath,
-          content: content.slice(0, 3000),
+          content: content.slice(0, 5000),
         });
       }
     }
@@ -188,35 +190,54 @@ async function extractKeyFiles(fileInfo, repoPath) {
       if (content) {
         result.readme.push({
           name: file.relativePath,
-          content: content.slice(0, 5000),
+          content: content.slice(0, 10000),
         });
       }
     }
   }
 
-  // 提取核心代码文件（按扩展名取前几个）
-  const coreExts = ['js', 'ts', 'py', 'java', 'go', 'rs'];
+  // 提取核心代码文件（按扩展名取前几个，增加数量以支持深度分析）
+  const coreExts = ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'go', 'rs', 'vue'];
   const sampledFiles = {};
+
+  // 定义关键目录优先级
+  const priorityDirs = ['src/', 'server/', 'app/', 'lib/', 'core/', 'services/', 'controllers/', 'routes/', 'models/', 'api/', 'views/', 'components/'];
 
   for (const file of fileInfo.files) {
     if (coreExts.includes(file.extension)) {
+      // 跳过测试文件和配置文件
+      if (file.relativePath.includes('test') || 
+          file.relativePath.includes('spec') || 
+          file.relativePath.includes('.config.') ||
+          file.relativePath.includes('node_modules')) {
+        continue;
+      }
+      
       if (!sampledFiles[file.extension]) {
         sampledFiles[file.extension] = [];
       }
-      if (sampledFiles[file.extension].length < 3) {
-        const content = await readFileContent(file.path, 10000);
+      
+      // 优先读取关键目录下的文件，增加到每个扩展名最多10个文件
+      const isPriority = priorityDirs.some(dir => file.relativePath.startsWith(dir));
+      const maxFiles = 10;
+      
+      if (sampledFiles[file.extension].length < maxFiles) {
+        const content = await readFileContent(file.path, 20000);
         if (content) {
           sampledFiles[file.extension].push({
             name: file.relativePath,
-            content: content.slice(0, 5000),
+            content: content.slice(0, 12000), // 增加内容长度
+            isPriority,
           });
         }
       }
     }
   }
 
-  for (const files of Object.values(sampledFiles)) {
-    result.core.push(...files);
+  // 按优先级排序，关键目录的文件放前面
+  for (const ext of Object.keys(sampledFiles)) {
+    sampledFiles[ext].sort((a, b) => (b.isPriority ? 1 : 0) - (a.isPriority ? 1 : 0));
+    result.core.push(...sampledFiles[ext]);
   }
 
   return result;
@@ -230,20 +251,33 @@ async function extractKeyFiles(fileInfo, repoPath) {
  */
 async function executeAnalysisStage(prompt, stageName) {
   console.log(`[Analyzer] 执行分析阶段: ${stageName}`);
+  console.log(`[Analyzer] Prompt 长度: ${prompt.length} 字符`);
   
-  const systemPrompt = '你是一位专业的代码分析专家。请按照用户的要求分析项目，并生成结构化的 Markdown 文档。输出必须是纯 Markdown 格式，不要包含其他解释。';
+  const systemPrompt = `你是一位资深的计算机科学教授和技术文档写作专家。你的任务是根据提供的代码仓库信息，撰写毕业论文级别的技术文档。
+
+要求：
+1. 输出必须是学术论文风格，语言严谨、逻辑清晰、论述充分
+2. 使用规范的学术表达方式，避免口语化
+3. 内容要深入、全面，体现专业的技术理解
+4. 图表要规范，使用 mermaid 语法
+5. 代码示例要详尽，解释要清晰
+6. 每个章节都要有明确的小结
+7. 保持客观、中立的学术态度
+
+请直接输出 Markdown 格式的文档内容，不要包含其他解释。`;
   
   const result = await withRetry(
     () => chatWithSystem(systemPrompt, prompt),
     2, // 重试 2 次
-    2000 // 间隔 2 秒
+    3000 // 间隔 3 秒
   );
   
+  console.log(`[Analyzer] 阶段 ${stageName} 完成，输出长度: ${result.length} 字符`);
   return result;
 }
 
 /**
- * 执行完整分析流程
+ * 执行完整分析流程（论文级别）
  * @param {string} repoPath - 仓库路径
  * @param {string} repoName - 仓库名称
  * @param {string} repoUrl - 仓库 URL
@@ -257,6 +291,8 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
     }
   };
 
+  console.log(`[Analyzer] 开始分析仓库: ${repoName}`);
+
   // 阶段 1: 收集文件信息
   progress(AnalysisStages.COLLECTING.name, AnalysisStages.COLLECTING.progress, AnalysisStages.COLLECTING.description);
   
@@ -267,76 +303,46 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
 
   console.log(`[Analyzer] 收集到 ${fileInfo.totalFiles} 个文件，主要语言: ${primaryLanguage}`);
 
-  // 阶段 2: 目录结构分析
-  progress(AnalysisStages.DIRECTORY.name, AnalysisStages.DIRECTORY.progress, AnalysisStages.DIRECTORY.description);
-  
-  const directoryPrompt = assemblePrompt(directoryAnalysisPrompt, {
-    projectName: repoName,
-    language: primaryLanguage,
-    directoryTree: directoryTree || '(空目录)',
-  });
-  
-  const directoryAnalysis = await executeAnalysisStage(directoryPrompt, '目录分析');
-
-  // 阶段 3: 技术架构分析
-  progress(AnalysisStages.ARCHITECTURE.name, AnalysisStages.ARCHITECTURE.progress, AnalysisStages.ARCHITECTURE.description);
-  
+  // 准备公共数据
   const depContent = keyFiles.dependencies
     .map((f) => `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
     .join('\n\n') || '(未找到依赖配置文件)';
   
   const coreContent = keyFiles.core
-    .map((f) => `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join('\n\n') || '(未找到核心代码文件)';
-  
-  const architecturePrompt = assemblePrompt(architectureAnalysisPrompt, {
-    projectName: repoName,
-    dependencyFiles: depContent,
-    keyFiles: coreContent,
-  });
-  
-  const architectureAnalysis = await executeAnalysisStage(architecturePrompt, '架构分析');
-
-  // 阶段 4: 开发环境分析
-  progress(AnalysisStages.ENVIRONMENT.name, AnalysisStages.ENVIRONMENT.progress, AnalysisStages.ENVIRONMENT.description);
-  
-  const configContent = keyFiles.config
-    .map((f) => `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join('\n\n') || '(未找到配置文件)';
+    .slice(0, 15)
+    .map((f) => `### ${f.name}\n\`\`\`${path.extname(f.name).slice(1) || 'javascript'}\n${f.content}\n\`\`\``)
+    .join('\n\n---\n\n') || '(未找到核心代码文件)';
   
   const readmeContent = keyFiles.readme
     .map((f) => f.content)
     .join('\n\n') || '(未找到 README 文件)';
   
-  const environmentPrompt = assemblePrompt(environmentAnalysisPrompt, {
-    projectName: repoName,
-    configFiles: configContent,
-    envExample: readmeContent,
-  });
-  
-  const environmentAnalysis = await executeAnalysisStage(environmentPrompt, '环境分析');
+  const configContent = keyFiles.config
+    .map((f) => `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
+    .join('\n\n') || '(未找到配置文件)';
 
-  // 阶段 5: 功能模块分析
-  progress(AnalysisStages.MODULE.name, AnalysisStages.MODULE.progress, AnalysisStages.MODULE.description);
-  
   const sourceStructure = fileInfo.dirs
     .filter((d) => !d.startsWith('.') && !d.includes('node_modules'))
-    .slice(0, 50)
+    .slice(0, 100)
     .join('\n');
-  
-  const modulePrompt = assemblePrompt(moduleAnalysisPrompt, {
-    projectName: repoName,
-    language: primaryLanguage,
-    sourceStructure: sourceStructure || '(未找到源代码目录)',
-    coreFiles: coreContent,
-  });
-  
-  const moduleAnalysis = await executeAnalysisStage(modulePrompt, '模块分析');
 
-  // 阶段 6: 数据库结构分析
-  progress(AnalysisStages.DATABASE.name, AnalysisStages.DATABASE.progress, AnalysisStages.DATABASE.description);
+  // 收集 API 路由文件
+  const apiFiles = fileInfo.files.filter((f) => 
+    f.relativePath.includes('route') || 
+    f.relativePath.includes('controller') ||
+    f.relativePath.includes('api') ||
+    f.relativePath.includes('router')
+  );
   
-  // 查找数据库相关文件
+  const apiContent = await Promise.all(
+    apiFiles.slice(0, 8).map(async (f) => {
+      const content = await readFileContent(f.path, 10000);
+      return content ? `### ${f.relativePath}\n\`\`\`${f.extension}\n${content}\n\`\`\`` : '';
+    })
+  );
+  const combinedApiContent = apiContent.filter(Boolean).join('\n\n');
+
+  // 收集数据库文件
   const dbFiles = fileInfo.files.filter((f) => 
     f.relativePath.includes('model') ||
     f.relativePath.includes('entity') ||
@@ -347,103 +353,225 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
   );
   
   const dbContent = await Promise.all(
-    dbFiles.slice(0, 5).map(async (f) => {
-      const content = await readFileContent(f.path, 5000);
+    dbFiles.slice(0, 8).map(async (f) => {
+      const content = await readFileContent(f.path, 10000);
       return content ? `### ${f.relativePath}\n\`\`\`\n${content}\n\`\`\`` : '';
     })
   );
+  const combinedDbContent = dbContent.filter(Boolean).join('\n\n') || '(未找到数据库相关文件)';
+
+  // 存储各章节内容
+  let chapter1 = '';
+  let chapter2 = '';
+  let chapter3 = '';
+  let chapter4 = '';
+  let chapter5 = '';
+  let chapter6 = '';
+  let qaSection = '';
+
+  // ========== 第1章：绪论 ==========
+  progress('chapter1', 10, '正在生成第1章：绪论...');
   
-  const databasePrompt = assemblePrompt(databaseAnalysisPrompt, {
+  const introPrompt = assemblePrompt(introductionPrompt, {
     projectName: repoName,
-    databaseFiles: dbContent.filter(Boolean).join('\n\n') || '(未找到数据库相关文件)',
-    modelFiles: '(从上方数据库文件中提取)',
+    language: primaryLanguage,
+    readmeContent: readmeContent,
+    directoryTree: directoryTree || '(空目录)',
+    dependencyFiles: depContent,
   });
   
-  const databaseAnalysis = await executeAnalysisStage(databasePrompt, '数据库分析');
+  chapter1 = await executeAnalysisStage(introPrompt, '第1章 绪论');
 
-  // 阶段 7: 答辩问题生成
+  // ========== 第2章：系统需求分析 ==========
+  progress('chapter2', 25, '正在生成第2章：系统需求分析...');
+  
+  const reqPrompt = assemblePrompt(requirementAnalysisPrompt, {
+    projectName: repoName,
+    language: primaryLanguage,
+    sourceStructure: sourceStructure || '(未找到源代码目录)',
+    coreFiles: coreContent,
+    readmeContent: readmeContent,
+  });
+  
+  chapter2 = await executeAnalysisStage(reqPrompt, '第2章 系统需求分析');
+
+  // ========== 第3章：系统设计 ==========
+  progress('chapter3', 40, '正在生成第3章：系统设计...');
+  
+  const designPrompt = assemblePrompt(systemDesignPrompt, {
+    projectName: repoName,
+    language: primaryLanguage,
+    sourceStructure: sourceStructure || '(未找到源代码目录)',
+    coreFiles: coreContent,
+    dependencyFiles: depContent,
+    databaseFiles: combinedDbContent,
+  });
+  
+  chapter3 = await executeAnalysisStage(designPrompt, '第3章 系统设计');
+
+  // ========== 第4章：系统实现 ==========
+  progress('chapter4', 55, '正在生成第4章：系统实现...');
+  
+  const implPrompt = assemblePrompt(implementationPrompt, {
+    projectName: repoName,
+    language: primaryLanguage,
+    sourceStructure: sourceStructure || '(未找到源代码目录)',
+    coreFiles: coreContent,
+    apiFiles: combinedApiContent || '(未找到 API 路由文件)',
+    environmentInfo: configContent,
+  });
+  
+  chapter4 = await executeAnalysisStage(implPrompt, '第4章 系统实现');
+
+  // ========== 第5章：系统测试 ==========
+  progress('chapter5', 70, '正在生成第5章：系统测试...');
+  
+  const testPrompt = assemblePrompt(testingPrompt, {
+    projectName: repoName,
+    language: primaryLanguage,
+    coreFiles: coreContent.slice(0, 20000),
+    apiInfo: combinedApiContent.slice(0, 10000) || '(未找到 API 信息)',
+  });
+  
+  chapter5 = await executeAnalysisStage(testPrompt, '第5章 系统测试');
+
+  // ========== 第6章：总结与展望 ==========
+  progress('chapter6', 85, '正在生成第6章：总结与展望...');
+  
+  const summaryPromptText = assemblePrompt(summaryPrompt, {
+    projectName: repoName,
+    techStack: keyFiles.dependencies.map((f) => path.basename(f.name)).join(', ') || primaryLanguage,
+    mainFeatures: chapter2.slice(0, 2000),
+    architecture: chapter3.slice(0, 2000),
+  });
+  
+  chapter6 = await executeAnalysisStage(summaryPromptText, '第6章 总结与展望');
+
+  // ========== 答辩问题 ==========
   progress(AnalysisStages.QA.name, AnalysisStages.QA.progress, AnalysisStages.QA.description);
   
-  // 提取技术栈信息
-  const techStack = keyFiles.dependencies
-    .map((f) => path.basename(f.name))
-    .join(', ') || primaryLanguage;
-  
-  const qaPrompt = assemblePrompt(qaGenerationPrompt, {
+  const qaPromptText = assemblePrompt(thesisQaPrompt, {
     projectName: repoName,
-    techStack,
-    mainFeatures: moduleAnalysis.slice(0, 1000),
-    architecture: architectureAnalysis.slice(0, 1000),
+    techStack: keyFiles.dependencies.map((f) => path.basename(f.name)).join(', ') || primaryLanguage,
+    mainFeatures: chapter2.slice(0, 2000),
+    architecture: chapter3.slice(0, 2000),
   });
   
-  const qaAnalysis = await executeAnalysisStage(qaPrompt, '答辩问题');
+  qaSection = await executeAnalysisStage(qaPromptText, '答辩问题');
 
-  // 阶段 8: 整合文档
+  // 阶段: 整合文档
   progress(AnalysisStages.INTEGRATING.name, AnalysisStages.INTEGRATING.progress, AnalysisStages.INTEGRATING.description);
   
-  // 组装最终文档
-  const finalDocument = `# ${repoName} 代码解析文档
+  // 组装最终文档（论文格式）
+  const finalDocument = `# ${repoName} 系统分析与设计文档
 
-> 由 DeepWiki Analyzer 自动生成
-> 生成时间: ${new Date().toLocaleString('zh-CN')}
-> 仓库地址: ${repoUrl}
-
----
-
-## 目录
-
-1. [系统目录结构分析](#1-系统目录结构分析)
-2. [系统技术架构分析](#2-系统技术架构分析)
-3. [系统开发环境和运行环境分析](#3-系统开发环境和运行环境分析)
-4. [系统功能模块讲解](#4-系统功能模块讲解)
-5. [数据库表结构和表关系讲解](#5-数据库表结构和表关系讲解)
-6. [常见答辩问题及答案](#6-常见答辩问题及答案)
+> **文档类型**: 毕业论文级别技术文档
+> **生成工具**: DeepWiki Analyzer
+> **生成时间**: ${new Date().toLocaleString('zh-CN')}
+> **项目仓库**: ${repoUrl}
+> **主要语言**: ${primaryLanguage}
 
 ---
 
-## 1. 系统目录结构分析
+## 文档目录
 
-${directoryAnalysis}
+- [第1章 绪论](#第1章-绪论)
+  - [1.1 项目背景](#11-项目背景)
+  - [1.2 项目目的和意义](#12-项目目的和意义)
+  - [1.3 国内外研究现状](#13-国内外研究现状)
+  - [1.4 项目主要功能](#14-项目主要功能)
+  - [1.5 技术选型概述](#15-技术选型概述)
+- [第2章 系统需求分析](#第2章-系统需求分析)
+  - [2.1 需求概述](#21-需求概述)
+  - [2.2 功能需求分析](#22-功能需求分析)
+  - [2.3 用例分析](#23-用例分析)
+  - [2.4 非功能需求分析](#24-非功能需求分析)
+  - [2.5 可行性分析](#25-可行性分析)
+- [第3章 系统设计](#第3章-系统设计)
+  - [3.1 系统架构设计](#31-系统架构设计)
+  - [3.2 功能模块设计](#32-功能模块设计)
+  - [3.3 数据库设计](#33-数据库设计)
+  - [3.4 接口设计](#34-接口设计)
+  - [3.5 详细设计](#35-详细设计)
+- [第4章 系统实现](#第4章-系统实现)
+  - [4.1 开发环境搭建](#41-开发环境搭建)
+  - [4.2 核心功能实现](#42-核心功能实现)
+  - [4.3 界面实现](#43-界面实现)
+  - [4.4 数据库实现](#44-数据库实现)
+  - [4.5 接口实现](#45-接口实现)
+- [第5章 系统测试](#第5章-系统测试)
+  - [5.1 测试概述](#51-测试概述)
+  - [5.2 测试环境](#52-测试环境)
+  - [5.3 功能测试](#53-功能测试)
+  - [5.4 性能测试](#54-性能测试)
+  - [5.5 兼容性测试](#55-兼容性测试)
+- [第6章 总结与展望](#第6章-总结与展望)
+  - [6.1 工作总结](#61-工作总结)
+  - [6.2 创新点](#62-创新点)
+  - [6.3 不足与改进](#63-不足与改进)
+  - [6.4 未来展望](#64-未来展望)
+- [附录：答辩问题及参考答案](#附录答辩问题及参考答案)
 
 ---
 
-## 2. 系统技术架构分析
-
-${architectureAnalysis}
+${chapter1}
 
 ---
 
-## 3. 系统开发环境和运行环境分析
-
-${environmentAnalysis}
+${chapter2}
 
 ---
 
-## 4. 系统功能模块讲解
-
-${moduleAnalysis}
+${chapter3}
 
 ---
 
-## 5. 数据库表结构和表关系讲解
-
-${databaseAnalysis}
+${chapter4}
 
 ---
 
-## 6. 常见答辩问题及答案
-
-${qaAnalysis}
+${chapter5}
 
 ---
 
-*本文档由 DeepWiki Analyzer 自动生成，仅供参考。*
+${chapter6}
+
+---
+
+# 附录：答辩问题及参考答案
+
+${qaSection}
+
+---
+
+## 参考文献
+
+[1] 本文档基于项目源代码自动分析生成
+[2] 技术文档参考计算机软件工程相关标准
+
+---
+
+**文档说明**
+
+本文档由 DeepWiki Analyzer 自动生成，包含项目完整的系统分析与设计内容，可作为毕业论文的技术参考文档使用。文档内容基于项目源代码进行深度分析，涵盖了需求分析、系统设计、系统实现、系统测试等完整软件开发流程。
+
+如需进一步完善，建议：
+1. 补充具体的项目背景数据和引用
+2. 添加实际的测试数据和截图
+3. 根据实际情况调整技术细节描述
+4. 补充用户调研和反馈数据
+
+---
+
+*本文档生成时间: ${new Date().toLocaleString('zh-CN')}*
 `;
 
   // 清理临时目录
   progress('cleanup', 99, '正在清理临时文件...');
   await cleanupDir(repoPath);
 
+  console.log(`[Analyzer] 分析完成，文档总长度: ${finalDocument.length} 字符`);
+  
   return finalDocument;
 }
 
