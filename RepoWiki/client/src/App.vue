@@ -104,8 +104,15 @@
             </div>
             <div class="action-buttons">
               <a :href="downloadUrl" class="btn btn-success" download>
-                📥 下载文档
+                📥 下载 MD
               </a>
+              <button
+                class="btn btn-primary"
+                @click="handleDownloadPdf"
+                :disabled="isPdfLoading"
+              >
+                {{ isPdfLoading ? "生成中..." : "📄 下载 PDF" }}
+              </button>
               <button class="btn btn-secondary" @click="handleReset">
                 分析新仓库
               </button>
@@ -129,20 +136,49 @@
 </template>
 
 <script>
-import { ref, computed, watch, onUnmounted } from "vue";
+/**
+ * DeepWiki Analyzer 前端主组件
+ * 作者: JoyCode
+ * 创建日期: 2026-03-03
+ * 描述: 实现 Markdown 预览、Mermaid 图表渲染和文件下载功能
+ */
+import { ref, computed, watch, onMounted, nextTick, onUnmounted } from "vue";
 import { marked } from "marked";
 import hljs from "highlight.js";
+import mermaid from "mermaid";
 import "highlight.js/styles/github-dark.css";
 import {
   submitAnalyze,
   getTaskStatus,
   getAnalyzeResult,
   getDownloadUrl,
+  getPdfUrl,
 } from "./services/api.js";
 
-// 配置 marked
+// Mermaid 初始化配置
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "neutral",
+  securityLevel: "loose",
+  flowchart: {
+    useMaxWidth: true,
+    htmlLabels: true,
+  },
+  er: {
+    useMaxWidth: true,
+  },
+});
+
+// 用于生成唯一 Mermaid 图表 ID
+let mermaidId = 0;
+
+// 配置 marked - 跳过 mermaid 代码块的高亮处理
 marked.setOptions({
   highlight: function (code, lang) {
+    // mermaid 代码块不做语法高亮，保留原样
+    if (lang === "mermaid") {
+      return code;
+    }
     if (lang && hljs.getLanguage(lang)) {
       try {
         return hljs.highlight(code, { language: lang }).value;
@@ -171,6 +207,7 @@ export default {
       error: "",
     });
     const result = ref("");
+    const isPdfLoading = ref(false);
     let pollTimer = null;
 
     // 下载链接
@@ -178,10 +215,57 @@ export default {
       return taskId.value ? getDownloadUrl(taskId.value) : "";
     });
 
+    // PDF 下载链接
+    const pdfUrl = computed(() => {
+      return taskId.value ? getPdfUrl(taskId.value) : "";
+    });
+
+    /**
+     * 渲染 Mermaid 图表
+     * 将页面中的 mermaid 代码块转换为 SVG 图形
+     */
+    const renderMermaidDiagrams = async () => {
+      await nextTick();
+
+      // 查找所有 mermaid 代码块
+      const mermaidBlocks = document.querySelectorAll("code.language-mermaid");
+
+      for (const block of mermaidBlocks) {
+        try {
+          const code = block.textContent;
+          const id = `mermaid-${++mermaidId}`;
+
+          // 使用 mermaid 渲染为 SVG
+          const { svg } = await mermaid.render(id, code);
+
+          // 创建容器并替换原代码块
+          const container = document.createElement("div");
+          container.className = "mermaid-container";
+          container.innerHTML = svg;
+
+          const pre = block.parentElement;
+          if (pre && pre.tagName === "PRE") {
+            pre.replaceWith(container);
+          }
+        } catch (e) {
+          console.error("Mermaid 渲染失败:", e);
+          // 保留原始代码块，显示错误信息
+          block.parentElement.setAttribute("data-error", "图表渲染失败");
+        }
+      }
+    };
+
     // 渲染后的内容
     const renderedContent = computed(() => {
       if (!result.value) return "";
       return marked(result.value);
+    });
+
+    // 监听渲染内容变化，触发 Mermaid 渲染
+    watch(renderedContent, () => {
+      nextTick(() => {
+        renderMermaidDiagrams();
+      });
     });
 
     // 提交分析
@@ -264,12 +348,36 @@ export default {
       repoUrl.value = "";
       result.value = "";
       error.value = "";
+      isPdfLoading.value = false;
       taskInfo.value = {
         progress: 0,
         stageDescription: "",
         repoName: "",
         error: "",
       };
+    };
+
+    /**
+     * 处理 PDF 下载
+     * 调用后端 API 生成并下载 PDF 文件
+     */
+    const handleDownloadPdf = async () => {
+      if (!taskId.value || isPdfLoading.value) return;
+
+      isPdfLoading.value = true;
+
+      try {
+        // 直接打开 PDF 下载链接
+        window.open(pdfUrl.value, "_blank");
+      } catch (e) {
+        console.error("PDF 下载失败:", e);
+        error.value = "PDF 下载失败，请稍后重试";
+      } finally {
+        // 延迟重置加载状态，给用户反馈时间
+        setTimeout(() => {
+          isPdfLoading.value = false;
+        }, 1000);
+      }
     };
 
     // 组件卸载时清理
@@ -282,13 +390,16 @@ export default {
       taskId,
       status,
       isLoading,
+      isPdfLoading,
       error,
       taskInfo,
       result,
       downloadUrl,
+      pdfUrl,
       renderedContent,
       handleAnalyze,
       handleReset,
+      handleDownloadPdf,
     };
   },
 };
@@ -444,6 +555,21 @@ export default {
   text-align: center;
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+/* Mermaid 图表容器 */
+:deep(.mermaid-container) {
+  margin: 16px 0;
+  padding: 16px;
+  background-color: #f8fafc;
+  border-radius: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+:deep(.mermaid-container svg) {
+  max-width: 100%;
+  height: auto;
 }
 
 /* 响应式 */

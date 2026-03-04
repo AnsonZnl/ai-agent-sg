@@ -2,7 +2,8 @@
  * 分析 API 路由
  * 作者: JoyCode
  * 创建日期: 2026-03-03
- * 描述: 提供仓库分析的 REST API 接口
+ * 更新日期: 2026-03-04
+ * 描述: 提供仓库分析的 REST API 接口，支持 MD 和 PDF 下载
  */
 
 import express from 'express';
@@ -10,6 +11,7 @@ import { taskManager, TaskStatus } from '../services/taskManager.js';
 import { cloneRepository, isValidGiteeUrl, extractRepoName } from '../services/gitService.js';
 import { analyzeRepository } from '../services/analyzerService.js';
 import { AnalysisStages } from '../services/taskManager.js';
+import { generatePdf } from '../services/pdfService.js';
 
 const router = express.Router();
 
@@ -241,6 +243,55 @@ router.get('/stats', (req, res) => {
     res.status(500).json({
       success: false,
       error: '获取统计信息失败',
+    });
+  }
+});
+
+/**
+ * GET /api/pdf/:taskId
+ * 下载 PDF 文件
+ */
+router.get('/pdf/:taskId', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const task = taskManager.getTask(taskId);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: '任务不存在',
+      });
+    }
+
+    if (task.status !== TaskStatus.COMPLETED) {
+      return res.status(400).json({
+        success: false,
+        error: '任务尚未完成',
+        status: task.status,
+        progress: task.progress,
+      });
+    }
+
+    // 生成 PDF
+    const title = task.repoName || '代码分析文档';
+    console.log(`[API] 开始生成 PDF: ${taskId}`);
+    
+    const pdfBuffer = await generatePdf(title, task.result);
+    
+    // 设置响应头
+    const filename = `${task.repoName || 'analysis'}-${new Date().toISOString().split('T')[0]}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    
+    // 返回 PDF 文件
+    res.send(pdfBuffer);
+    console.log(`[API] PDF 生成完成: ${filename}`);
+  } catch (error) {
+    console.error('[API] PDF 生成失败:', error);
+    res.status(500).json({
+      success: false,
+      error: `PDF 生成失败: ${error.message}`,
     });
   }
 });

@@ -62,12 +62,21 @@ export async function getAnalyzeResult(taskId) {
 }
 
 /**
- * 获取下载链接
+ * 获取 MD 文件下载链接
  * @param {string} taskId - 任务 ID
  * @returns {string} 下载链接
  */
 export function getDownloadUrl(taskId) {
   return `${API_BASE}/download/${taskId}`;
+}
+
+/**
+ * 获取 PDF 文件下载链接
+ * @param {string} taskId - 任务 ID
+ * @returns {string} PDF 下载链接
+ */
+export function getPdfUrl(taskId) {
+  return `${API_BASE}/pdf/${taskId}`;
 }
 
 /**
@@ -90,5 +99,6 @@ export default {
   getTaskStatus,
   getAnalyzeResult,
   getDownloadUrl,
+  getPdfUrl,
   getStats,
 };

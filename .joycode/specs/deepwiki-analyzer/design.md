@@ -14,6 +14,8 @@
 | 代码克隆      | simple-git            | ^3.x     | Git 操作库                   |
 | Markdown 渲染 | marked                | ^12.x    | MD 预览渲染                  |
 | 代码高亮      | highlight.js          | ^11.x    | 代码语法高亮                 |
+| Mermaid 渲染  | mermaid               | ^10.x    | 图表渲染为可视化图形         |
+| PDF 生成      | Puppeteer             | ^21.x    | 无头浏览器生成 PDF           |
 | 进度通信      | 轮询 API              | -        | 前端轮询获取任务状态         |
 
 ### 1.2 系统架构
@@ -66,6 +68,7 @@ graph TB
 | **分析引擎**   | 分模块分析、Prompt 编排、结果整合 | LangChain Chain   |
 | **文档生成器** | 模板渲染、mermaid 图表生成        | 字符串模板        |
 | **前端界面**   | 用户交互、进度展示、文档预览      | Vue 3 SPA         |
+| **PDF 生成器** | MD 文档转 PDF 文件                | Puppeteer         |
 
 ---
 
@@ -119,12 +122,13 @@ stateDiagram-v2
 
 #### 2.2.1 API 接口设计
 
-| 接口                    | 方法 | 说明         | 请求体              | 响应体                              |
-| ----------------------- | ---- | ------------ | ------------------- | ----------------------------------- |
-| `/api/analyze`          | POST | 提交分析任务 | `{repoUrl: string}` | `{taskId: string}`                  |
-| `/api/status/:taskId`   | GET  | 查询任务状态 | -                   | `{status, progress, stage, error?}` |
-| `/api/result/:taskId`   | GET  | 获取分析结果 | -                   | `{content: string}` (MD 文档)       |
-| `/api/download/:taskId` | GET  | 下载 MD 文件 | -                   | 文件流                              |
+| 接口                    | 方法 | 说明          | 请求体              | 响应体                              |
+| ----------------------- | ---- | ------------- | ------------------- | ----------------------------------- |
+| `/api/analyze`          | POST | 提交分析任务  | `{repoUrl: string}` | `{taskId: string}`                  |
+| `/api/status/:taskId`   | GET  | 查询任务状态  | -                   | `{status, progress, stage, error?}` |
+| `/api/result/:taskId`   | GET  | 获取分析结果  | -                   | `{content: string}` (MD 文档)       |
+| `/api/download/:taskId` | GET  | 下载 MD 文件  | -                   | 文件流                              |
+| `/api/pdf/:taskId`      | GET  | 下载 PDF 文件 | -                   | PDF 文件流                          |
 
 #### 2.2.2 数据模型设计
 
@@ -179,7 +183,7 @@ flowchart TD
 ### 2.3 目录结构设计
 
 ```
-deepwiki-analyzer/
+RepoWiki/
 ├── .env                        # 环境配置文件
 ├── .env.example                # 环境配置模板
 ├── package.json                # 项目依赖
@@ -192,16 +196,13 @@ deepwiki-analyzer/
 │   ├── services/              # 业务服务
 │   │   ├── gitService.js      # Git操作服务
 │   │   ├── analyzerService.js # 分析引擎服务
-│   │   └── taskManager.js     # 任务管理服务
+│   │   ├── taskManager.js     # 任务管理服务
+│   │   └── pdfService.js      # PDF生成服务
 │   ├── prompts/               # Prompt模板
-│   │   ├── directory.js       # 目录分析模板
-│   │   ├── architecture.js    # 架构分析模板
-│   │   ├── modules.js         # 模块分析模板
-│   │   ├── database.js        # 数据库分析模板
-│   │   └── qa.js              # 答辩问题模板
+│   │   └── index.js           # 所有Prompt模板
 │   └── utils/                 # 工具函数
-│       ├── fileUtils.js       # 文件操作工具
-│       └── llmUtils.js        # LLM调用工具
+│       ├── config.js          # 配置管理
+│       └── llm.js             # LLM调用工具
 │
 └── client/                     # 前端代码
     ├── index.html             # HTML入口
@@ -220,6 +221,71 @@ deepwiki-analyzer/
     ├── vite.config.js         # Vite配置
     └── package.json           # 前端依赖
 ```
+
+### 2.4 Mermaid 渲染方案
+
+前端使用 `mermaid` npm 包实现图表渲染：
+
+```javascript
+// 前端 Mermaid 初始化配置
+import mermaid from "mermaid";
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "default",
+  securityLevel: "loose",
+  flowchart: {
+    useMaxWidth: true,
+    htmlLabels: true,
+  },
+});
+```
+
+**渲染流程：**
+
+1. Markdown 内容通过 `marked` 解析为 HTML
+2. 检测 `<pre><code class="language-mermaid">` 代码块
+3. 使用 `mermaid.render()` 将代码块转换为 SVG 图形
+4. 替换原始代码块为渲染后的 SVG
+
+### 2.5 PDF 生成方案
+
+使用 Puppeteer 在后端生成 PDF：
+
+```javascript
+// PDF 生成服务核心逻辑
+import puppeteer from "puppeteer";
+
+async function generatePdf(htmlContent, outputPath) {
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox"],
+  });
+  const page = await browser.newPage();
+
+  // 注入 Mermaid 渲染脚本
+  await page.setContent(htmlContent, { waitUntil: "networkidle0" });
+  await page.evaluate(/* 渲染 Mermaid 图表 */);
+
+  // 生成 PDF
+  await page.pdf({
+    path: outputPath,
+    format: "A4",
+    margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" },
+    printBackground: true,
+  });
+
+  await browser.close();
+}
+```
+
+**PDF 生成流程：**
+
+1. 后端将 Markdown 转换为 HTML
+2. 注入 Mermaid 渲染脚本，将图表代码转为 SVG
+3. 应用打印样式（字体、分页、页眉页脚）
+4. 使用 Puppeteer 生成 PDF 文件
+5. 返回文件流供前端下载
 
 ---
 
@@ -284,12 +350,59 @@ const updateProgress = (taskId, stage, progress) => {
 };
 ```
 
-### 4.3 Mermaid 图表生成
+### 4.3 Mermaid 图表渲染
 
-分析结果中的流程图、架构图、ER 图均使用 mermaid 语法：
+前端使用 mermaid 插件将代码块渲染为可视化图表：
 
-```mermaid
-graph TB
-    A[模块A] --> B[模块B]
-    B --> C[模块C]
+```javascript
+// 在 Vue 组件中渲染 Mermaid 图表
+import mermaid from "mermaid";
+
+// 初始化配置
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "neutral",
+});
+
+// 渲染所有 mermaid 代码块
+async function renderMermaidBlocks() {
+  const blocks = document.querySelectorAll("code.language-mermaid");
+  for (const block of blocks) {
+    const code = block.textContent;
+    const { svg } = await mermaid.render(`mermaid-${Date.now()}`, code);
+    const container = block.parentElement;
+    container.innerHTML = svg;
+  }
+}
+```
+
+支持的图表类型：
+
+- `graph TB/BT/LR/RL` - 流程图/架构图
+- `flowchart TD` - 流程图
+- `erDiagram` - 数据库 ER 图
+- `sequenceDiagram` - 时序图
+- `classDiagram` - 类图
+
+### 4.4 PDF 文件生成
+
+后端使用 Puppeteer 生成 PDF，确保图表正确渲染：
+
+```javascript
+// PDF 生成关键配置
+const pdfOptions = {
+  format: "A4",
+  margin: {
+    top: "20mm",
+    bottom: "20mm",
+    left: "15mm",
+    right: "15mm",
+  },
+  printBackground: true,
+  displayHeaderFooter: true,
+  headerTemplate:
+    '<div style="font-size: 10px; text-align: center; width: 100%;">{{title}}</div>',
+  footerTemplate:
+    '<div style="font-size: 10px; text-align: center; width: 100%;">第 {{page}} 页</div>',
+};
 ```
