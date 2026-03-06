@@ -19,6 +19,7 @@ import {
   testingPrompt,
   summaryPrompt,
   thesisQaPrompt,
+  moduleDeepDivePrompt,
   assemblePrompt,
 } from '../prompts/index.js';
 
@@ -364,6 +365,8 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
   let chapter1 = '';
   let chapter2 = '';
   let chapter3 = '';
+  // 新增：功能模块两步法详解章节内容
+  let moduleDeepDive = '';
   let chapter4 = '';
   let chapter5 = '';
   let chapter6 = '';
@@ -408,6 +411,27 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
   });
   
   chapter3 = await executeAnalysisStage(designPrompt, '第3章 系统设计');
+
+  // ========== 专章：功能模块详解（两步法） ==========
+  // 做什么：基于真实代码自动识别功能模块，并逐一讲解，生成 Mermaid 图例
+  // 为什么：满足“先识别模块再逐一讲解”的核心需求，作为默认最重要章节
+  progress('module', 48, '正在生成功能模块两步法详解...');
+  const techStackStr = keyFiles.dependencies.map((f) => path.basename(f.name)).join(', ') || primaryLanguage;
+
+  const modulePrompt = assemblePrompt(moduleDeepDivePrompt, {
+    projectName: repoName,
+    language: primaryLanguage,
+    techStack: techStackStr,
+    directoryTree: directoryTree || '(空目录)',
+    sourceStructure: sourceStructure || '(未找到源代码目录)',
+    coreFiles: coreContent,
+    apiFiles: combinedApiContent || '(未找到 API 路由文件)',
+    databaseFiles: combinedDbContent,
+    readmeContent: readmeContent,
+    dependencyFiles: depContent,
+  });
+
+  moduleDeepDive = await executeAnalysisStage(modulePrompt, '功能模块两步法详解');
 
   // ========== 第4章：系统实现 ==========
   progress('chapter4', 55, '正在生成第4章：系统实现...');
@@ -493,6 +517,7 @@ export async function analyzeRepository(repoPath, repoName, repoUrl, onProgress)
   - [3.3 数据库设计](#33-数据库设计)
   - [3.4 接口设计](#34-接口设计)
   - [3.5 详细设计](#35-详细设计)
+- [专章 功能模块详解（两步法）](#专章-功能模块详解两步法)
 - [第4章 系统实现](#第4章-系统实现)
   - [4.1 开发环境搭建](#41-开发环境搭建)
   - [4.2 核心功能实现](#42-核心功能实现)
@@ -523,6 +548,12 @@ ${chapter2}
 ---
 
 ${chapter3}
+
+---
+
+# 专章：功能模块详解（两步法）
+
+${moduleDeepDive}
 
 ---
 

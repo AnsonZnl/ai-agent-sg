@@ -9,6 +9,7 @@
     "dev:server": "node --watch server/index.js",
     "dev:client": "cd client && npm run dev",
     "start": "node server/index.js",
+    "start:quick": "node scripts/start.js",
     "build": "cd client && npm run build",
     "install:all": "npm install && cd client && npm install"
   },
