@@ -1,0 +1,139 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+interface WikiViewerProps {
+  content: string
+  isStreaming?: boolean
+}
+
+export default function WikiViewer({ content, isStreaming }: WikiViewerProps) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (isStreaming && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [content, isStreaming])
+
+  useEffect(() => {
+    // 渲染 Mermaid 图表
+    const renderMermaid = async () => {
+      if (typeof window === 'undefined') return
+      const mermaid = (await import('mermaid')).default
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'default',
+        securityLevel: 'loose',
+      })
+
+      const elements = document.querySelectorAll('.mermaid-source')
+      for (const el of Array.from(elements)) {
+        const source = el.textContent || ''
+        const container = el.parentElement
+        if (!container || container.querySelector('svg')) continue
+        try {
+          const id = `mermaid-${Math.random().toString(36).slice(2)}`
+          const { svg } = await mermaid.render(id, source)
+          container.innerHTML = svg
+        } catch (e) {
+          // keep original code block on error
+        }
+      }
+    }
+
+    if (!isStreaming) {
+      renderMermaid()
+    }
+  }, [content, isStreaming])
+
+  return (
+    <div className="wiki-content prose prose-gray max-w-none">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ node, className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || '')
+            const lang = match?.[1]
+            const codeStr = String(children).replace(/\n$/, '')
+
+            if (lang === 'mermaid') {
+              return (
+                <div className="mermaid-container my-6 flex justify-center overflow-x-auto bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  <div className="mermaid-source hidden">{codeStr}</div>
+                  <div className="mermaid-render">
+                    <pre className="text-xs text-gray-400 italic">渲染 Mermaid 图表中...</pre>
+                  </div>
+                </div>
+              )
+            }
+
+            const isBlock = !props.ref && codeStr.includes('\n')
+            if (isBlock || lang) {
+              return (
+                <div className="relative my-4">
+                  {lang && (
+                    <span className="absolute top-2 right-3 text-xs text-gray-400 font-mono">{lang}</span>
+                  )}
+                  <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 overflow-x-auto">
+                    <code className={`font-mono text-sm ${className || ''}`} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                </div>
+              )
+            }
+
+            return (
+              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-gray-800" {...props}>
+                {children}
+              </code>
+            )
+          },
+          h1: ({ children }) => (
+            <h1 className="text-3xl font-bold text-gray-900 mb-4 mt-8 pb-3 border-b-2 border-gray-200">{children}</h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="text-2xl font-semibold text-gray-800 mb-3 mt-8 pb-2 border-b border-gray-200">{children}</h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="text-xl font-semibold text-gray-800 mb-2 mt-6">{children}</h3>
+          ),
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-4">
+              <table className="min-w-full border border-gray-200 rounded-lg">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="bg-gray-50 px-4 py-2 text-left font-semibold text-gray-700 border border-gray-200">{children}</th>
+          ),
+          td: ({ children }) => (
+            <td className="px-4 py-2 border border-gray-200 text-gray-700">{children}</td>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-4 border-blue-400 pl-4 py-1 my-4 bg-blue-50 rounded-r-lg text-gray-700">{children}</blockquote>
+          ),
+          ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-3 pl-4">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-3 pl-4">{children}</ol>,
+          li: ({ children }) => <li className="text-gray-700">{children}</li>,
+          p: ({ children }) => <p className="text-gray-700 leading-relaxed my-3">{children}</p>,
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{children}</a>
+          ),
+          hr: () => <hr className="my-8 border-gray-200" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+      {isStreaming && (
+        <div className="flex items-center gap-2 mt-4 text-blue-500">
+          <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse rounded" />
+          <span className="text-sm">正在生成...</span>
+        </div>
+      )}
+      <div ref={bottomRef} />
+    </div>
+  )
+}
