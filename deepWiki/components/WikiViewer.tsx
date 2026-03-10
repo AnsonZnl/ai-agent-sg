@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -9,43 +9,73 @@ interface WikiViewerProps {
   isStreaming?: boolean
 }
 
+// 独立的 Mermaid 图表组件，memo 防止父组件重渲染时重建
+const MermaidChart = memo(function MermaidChart({ source }: { source: string }) {
+  const [svg, setSvg] = useState<string>('')
+  const [error, setError] = useState<string>('')
+  const rendered = useRef(false)
+
+  useEffect(() => {
+    if (rendered.current) return
+    rendered.current = true
+
+    const clean = source.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
+    const render = async () => {
+      try {
+        const mermaid = (await import('mermaid')).default
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'default',
+          securityLevel: 'loose',
+          flowchart: { htmlLabels: true },
+        })
+        const id = `mermaid-${Math.random().toString(36).slice(2)}`
+        const { svg: rendered } = await mermaid.render(id, clean)
+        setSvg(rendered)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    }
+
+    render()
+  }, [source])
+
+  if (error) {
+    return (
+      <details className="mermaid-error w-full">
+        <summary className="text-red-600 cursor-pointer text-xs px-2 py-1">
+          图表语法错误（点击查看详情）
+        </summary>
+        <pre className="text-xs text-gray-500 mt-2 whitespace-pre-wrap break-all">{error}</pre>
+        <pre className="text-xs text-gray-700 mt-1 bg-gray-50 p-2 rounded overflow-x-auto">{source}</pre>
+      </details>
+    )
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex items-center gap-2 text-gray-400 text-xs py-2">
+        <span className="inline-block w-3 h-3 border border-gray-300 border-t-blue-400 rounded-full animate-spin" />
+        渲染图表中...
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="flex justify-center overflow-x-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  )
+})
+
 export default function WikiViewer({ content, isStreaming }: WikiViewerProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (isStreaming && bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [content, isStreaming])
-
-  useEffect(() => {
-    // 渲染 Mermaid 图表
-    const renderMermaid = async () => {
-      if (typeof window === 'undefined') return
-      const mermaid = (await import('mermaid')).default
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: 'default',
-        securityLevel: 'loose',
-      })
-
-      const elements = document.querySelectorAll('.mermaid-source')
-      for (const el of Array.from(elements)) {
-        const source = el.textContent || ''
-        const container = el.parentElement
-        if (!container || container.querySelector('svg')) continue
-        try {
-          const id = `mermaid-${Math.random().toString(36).slice(2)}`
-          const { svg } = await mermaid.render(id, source)
-          container.innerHTML = svg
-        } catch (e) {
-          // keep original code block on error
-        }
-      }
-    }
-
-    if (!isStreaming) {
-      renderMermaid()
     }
   }, [content, isStreaming])
 
@@ -61,11 +91,12 @@ export default function WikiViewer({ content, isStreaming }: WikiViewerProps) {
 
             if (lang === 'mermaid') {
               return (
-                <div className="mermaid-container my-6 flex justify-center overflow-x-auto bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <div className="mermaid-source hidden">{codeStr}</div>
-                  <div className="mermaid-render">
-                    <pre className="text-xs text-gray-400 italic">渲染 Mermaid 图表中...</pre>
-                  </div>
+                <div className="mermaid-container my-6 overflow-x-auto bg-gray-50 rounded-lg p-4 border border-gray-200">
+                  {isStreaming ? (
+                    <pre className="text-xs text-gray-400 italic">流式生成中，完成后渲染图表...</pre>
+                  ) : (
+                    <MermaidChart source={codeStr} />
+                  )}
                 </div>
               )
             }
